@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232a63" />
+      <stop offset="1" stop-color="#0d1030" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <!-- corridor: a wide light track with a bright centre line drawn inside it -->
+  <path d="M256 96 L416 400 L96 400 Z" fill="none" stroke="#d6f0ff" stroke-width="76"
+        stroke-linejoin="round" opacity="0.28" />
+  <path d="M256 96 L416 400 L96 400 Z" fill="none" stroke="#0d1030" stroke-width="60"
+        stroke-linejoin="round" />
+  <path d="M256 128 L386 380 L150 380" fill="none" stroke="#ffe8a3" stroke-width="20"
+        stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="256" cy="112" r="30" fill="#4ade80" />
+</svg>

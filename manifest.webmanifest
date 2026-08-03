@@ -1,0 +1,15 @@
+{
+  "name": "Trace",
+  "short_name": "Trace",
+  "description": "Practise tracing shapes, letters and numbers — staying inside the lines.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0d1030",
+  "theme_color": "#0d1030",
+  "icons": [
+    { "src": "./icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "./icons/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

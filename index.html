@@ -1,0 +1,94 @@
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+/>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#0d1030" />
+<title>Trace</title>
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="apple-touch-icon" href="./icons/icon-180.png" />
+<link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="./styles.css" />
+
+<div id="app">
+  <canvas id="board"></canvas>
+  <canvas id="fx"></canvas>
+
+  <!-- Long-press target for the grown-up panel. -->
+  <div id="parentTap" aria-hidden="true"></div>
+
+  <button id="help" hidden aria-label="Show me again">
+    <svg viewBox="0 0 24 24" width="46" height="46" aria-hidden="true">
+      <path
+        d="M12 4a8 8 0 1 0 8 8"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.6"
+        stroke-linecap="round"
+      />
+      <path d="M12 1.5 15.5 4 12 6.5z" fill="currentColor" />
+    </svg>
+  </button>
+
+  <div id="start">
+    <div class="startInner">
+      <h1>Trace</h1>
+      <p>Stay inside the lines!</p>
+      <button id="playBtn">Play</button>
+      <small>Press and hold the top-left corner for grown-up settings.</small>
+    </div>
+  </div>
+
+  <div id="panel" hidden>
+    <div class="sheet">
+      <h2>Grown-up settings</h2>
+
+      <section>
+        <h3>Progress</h3>
+        <dl class="stats">
+          <div><dt>Shapes tried</dt><dd id="statTrials">0</dd></div>
+          <div><dt>All-time correct</dt><dd id="statAll">—</dd></div>
+          <div><dt>Last 12</dt><dd id="statRecent">—</dd></div>
+          <div><dt>Shape level</dt><dd id="statLevel">1 of 5</dd></div>
+          <div><dt>Line gap</dt><dd id="statWidth">—</dd></div>
+        </dl>
+        <div id="statStrip" class="strip" aria-hidden="true"></div>
+        <p class="note">
+          Difficulty self-adjusts to keep success near 85% — the rate Wilson et al.
+          (2019) found to be fastest for learning. Filled pips are wins; ringed pips
+          are the deliberately harder challenge trials.
+        </p>
+      </section>
+
+      <section>
+        <h3>Sound</h3>
+        <label class="row"><input type="checkbox" id="optVoice" checked /> <span>Talking</span></label>
+        <label class="row"><input type="checkbox" id="optSound" checked /> <span>Sound effects</span></label>
+        <label class="row col">
+          <span>Talking speed</span>
+          <input type="range" id="optRate" min="0.6" max="1.2" step="0.02" value="0.92" />
+        </label>
+      </section>
+
+      <section>
+        <h3>What to practise</h3>
+        <select id="optFocus">
+          <option value="mix">Everything (shapes, letters, numbers, designs)</option>
+          <option value="shapes">Shapes only</option>
+          <option value="letters">Letters only</option>
+          <option value="numbers">Numbers only</option>
+        </select>
+      </section>
+
+      <div class="actions">
+        <button id="resetBtn" class="ghost">Reset progress</button>
+        <button id="panelClose">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
