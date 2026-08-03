@@ -9,7 +9,12 @@ It talks. Nothing important is text-only, because the intended player can't read
 
 ---
 
-## Running it
+**Live: https://quarkzebra.github.io/trace/** — open that on the iPad and add it
+to the home screen. Everything below is only needed if you want to change it.
+
+---
+
+## Running it locally
 
 ```bash
 node /Users/matthewbrown/Projects/Trace/serve.js
@@ -21,18 +26,22 @@ the same wifi. No build step, no dependencies.
 
 ### Putting it on the iPad's home screen
 
-In Safari on the iPad: **Share → Add to Home Screen**. It then launches
-full-screen with no browser chrome, keeps the screen awake while playing, and
-remembers progress between sessions.
+Open **https://quarkzebra.github.io/trace/** in Safari on the iPad, then
+**Share → Add to Home Screen**. It launches full-screen with no browser chrome,
+keeps the screen awake while playing, remembers progress between sessions, and
+works with no wifi once it's been opened once.
 
-One caveat: the offline cache (service worker) only registers over HTTPS, so over
-plain wifi the app needs the Mac's server running. If you want it fully offline,
-host the folder anywhere with HTTPS — GitHub Pages, Netlify drop, anything static
-— and add *that* to the home screen instead.
+Use the Pages URL rather than the `localhost`/LAN one for the home-screen copy —
+service workers only register over HTTPS, so the LAN version can't go offline.
 
-There's no Xcode on this machine, so this is a web app rather than a native one.
-If you later want it in the App Store, the whole thing drops into a WKWebView
-essentially unchanged.
+### Deploying a change
+
+Push to `main` and Pages rebuilds in a minute or so. The service worker is
+network-first, so an installed home-screen app picks up the new version next
+time it's opened with wifi — no cache-busting needed.
+
+This is a web app rather than a native one. If you later want it in the App
+Store, the whole thing drops into a WKWebView essentially unchanged.
 
 ---
 
