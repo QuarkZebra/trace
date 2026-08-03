@@ -9,10 +9,68 @@ It talks. Nothing important is text-only, because the intended player can't read
 
 ---
 
-**Live: https://quarkzebra.github.io/trace/** — open that on the iPad and add it
-to the home screen. Everything below is only needed if you want to change it.
+There are two versions in here:
+
+- **[ios/](ios/)** — a native iPad app. **Use this one.** Apple Pencil input is
+  smooth and lands exactly under the tip.
+- the web app at the top level, live at https://quarkzebra.github.io/trace/ —
+  handy for a quick look on any device, but the Pencil lags in Safari.
 
 ---
+
+## The native app
+
+Open `ios/Trace.xcodeproj` in Xcode and hit run. From the command line:
+
+```bash
+cd ios && xcodebuild -scheme Trace -sdk iphonesimulator -destination 'platform=iOS Simulator,name=Trace iPad' build
+```
+
+It needs the Xcode whose iOS platform is actually installed. Right now that's
+the 27 beta, so command-line builds need `DEVELOPER_DIR` pointed at it:
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+```
+
+To run on your own iPad, open the project in Xcode, select the Trace target →
+Signing & Capabilities, and pick your Apple ID as the team. Xcode will make a
+free provisioning profile; apps signed that way last seven days before needing
+a re-run, which is fine for home use.
+
+### Why native fixed the lag
+
+The browser version redrew the whole canvas on every `pointermove`, which a
+120 Hz Pencil out-runs, and positioned the ink from `clientX/clientY` against a
+CSS-sized canvas, which drifts once a full-screen PWA starts playing with the
+viewport. The native board is built so nothing redraws on a timer:
+
+- the corridor renders **once per trial** into an image parked on a layer
+- committed ink is a bitmap re-uploaded only when a stroke **ends**
+- the stroke in progress is a `CAShapeLayer` path, rasterised by the GPU
+- `coalescedTouches` gives the Pencil's full sample rate, not one point a frame
+- `predictedTouches` draw slightly ahead of the tip, hiding most of what's left
+- the demo dot and pulsing start markers are Core Animation, not per-frame code
+
+Per-touch work is a byte-grid hit test, checkpoint marking and a path append.
+Positions come from `preciseLocation(in:)`, so there's nothing to drift.
+
+### Self-test
+
+The simulator can't be sent real pencil input, so the app can drive synthetic
+strokes through its own code paths:
+
+```bash
+xcrun simctl launch --console-pty "Trace iPad" com.matthewbrown.trace -selftest
+```
+
+It checks judging, shape sampling, corridor caps and the adaptive controller,
+prints a report and exits. `-showshape <id> [-traced]` parks a single shape on
+screen for a screenshot, and `-autoplay` skips the Play button.
+
+---
+
+## The web version
 
 ## Running it locally
 
@@ -178,6 +236,25 @@ praise or the coaching tips.
 ---
 
 ## Layout
+
+### Native (Swift)
+
+| file | what it does |
+| --- | --- |
+| [ios/Trace/GameViewController.swift](ios/Trace/GameViewController.swift) | the trial loop, settings, saving |
+| [ios/Trace/Difficulty.swift](ios/Trace/Difficulty.swift) | the 85% rule — staircase, probes, levels |
+| [ios/Trace/BoardView.swift](ios/Trace/BoardView.swift) | drawing surface, pencil input, judging |
+| [ios/Trace/Geometry.swift](ios/Trace/Geometry.swift) | path sampling, corridor mask, checkpoints |
+| [ios/Trace/Shapes.swift](ios/Trace/Shapes.swift) | shape library and the design generator |
+| [ios/Trace/Celebration.swift](ios/Trace/Celebration.swift) | confetti, balloons, sparkles |
+| [ios/Trace/Audio.swift](ios/Trace/Audio.swift) | speech, and synthesised sound effects |
+| [ios/Trace/Lines.swift](ios/Trace/Lines.swift) | every spoken line |
+| [ios/Trace/SelfTest.swift](ios/Trace/SelfTest.swift) | the `-selftest` checks |
+
+The shape language and the adaptive engine are the same in both versions, so a
+shape added to one can be copied straight into the other.
+
+### Web (JavaScript)
 
 | file | what it does |
 | --- | --- |
