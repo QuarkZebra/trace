@@ -128,6 +128,13 @@ final class GameViewController: UIViewController {
                 let j = board.judge()
                 print("SELFTEST traced \(shape.id): win=\(j.win) reason=\(j.reason.rawValue)")
             }
+            // Park an unlock celebration on screen for a screenshot.
+            if ProcessInfo.processInfo.arguments.contains("-splatter") {
+                fx.paintSplatter(color: Pens.byId("grape").colors[0]) {}
+            }
+            if ProcessInfo.processInfo.arguments.contains("-lines") {
+                fx.drawnLines(color: Pens.byId("skinny").colors[0]) {}
+            }
             // Trace one shape then move to the next, to prove the previous
             // child's line doesn't linger on the new shape.
             if let k = ProcessInfo.processInfo.arguments.firstIndex(of: "-thenshape"),
@@ -156,6 +163,22 @@ final class GameViewController: UIViewController {
         skipDemoForTest = true
         learner = Learner()
 
+        // Reset must take the pens back too — that was the reported bug.
+        learner.totalWins = 80
+        learner.totalTrials = 90
+        learner.level = Limits.maxLevel
+        for i in 0..<12 {
+            learner.history.append(
+                TrialRecord(win: i != 0, probe: false, width: 12, level: 5, shapeId: "s"))
+        }
+        penBar.setPens(Pens.unlocked(for: learner), selected: Pens.default, animated: false)
+        print("SELFTEST --- reset ---")
+        print("SELFTEST before reset: \(penBar.pens.count) pens, selected \(pen.id)")
+        resetProgress()
+        print("SELFTEST after reset:  \(penBar.pens.count) pens, selected \(pen.id), wins \(learner.totalWins), level \(learner.level)")
+
+        SelfTest.checkResponsiveness()
+        SelfTest.checkUnlockSpacing()
         SelfTest.checkProgression()
         SelfTest.checkPens()
         SelfTest.checkStartArrows(board: board)
@@ -558,33 +581,79 @@ final class GameViewController: UIViewController {
         board.freeze(abort)
     }
 
-    /// Hand over any pens her progress has just earned.
+    /// Hand over any pens her progress has just earned, one at a time. The
+    /// milestones are staggered so this is normally a single pen, but if two
+    /// ever coincide they still get separate moments rather than sharing one.
     private func announceUnlocks() async {
         let available = Pens.unlocked(for: learner)
         let known = Set(penBar.pens.map(\.id))
         let fresh = available.filter { !known.contains($0.id) }
         guard !fresh.isEmpty else { return }
 
-        penBar.setPens(available, selected: pen, animated: true)
-        layoutPenBar()
+        for newPen in fresh {
+            let isFirstExtraPen = penBar.pens.count <= 1
+            penBar.setPens(Pens.unlocked(for: learner).filter { $0.id == newPen.id || known.contains($0.id) },
+                selected: pen, animated: true)
+            layoutPenBar()
 
-        sfx.bigWin()
-        fx.big(.fireworks)
-        // Several pens can arrive together; one sentence covers the batch.
-        for line in Set(fresh.map { $0.unlock.announcement }).sorted() where !line.isEmpty {
-            await voice.say(line)
-        }
-        try? await Task.sleep(nanoseconds: 900_000_000)
-        fx.clear()
+            board.freeze(true)
+            sfx.bigWin()
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                var resumed = false
+                let finish = {
+                    guard !resumed else { return }
+                    resumed = true
+                    cont.resume()
+                }
+                fx.sfxTick = { [weak self] in self?.sfx.pop() }
+                switch newPen.style {
+                case .paintSplatter, .rainbow:
+                    fx.paintSplatter(color: newPen.colors[0], then: finish)
+                case .drawnLines:
+                    fx.drawnLines(color: newPen.colors[0], then: finish)
+                }
+                Task { await voice.say(newPen.announcement) }
+            }
+            fx.sfxTick = nil
+            fx.clear()
 
-        // Switch her onto the newest pen so the reward is immediately visible.
-        if let newest = fresh.last {
-            pen = newest
-            board.pen = newest
-            penBar.select(newest)
-            settings.penId = newest.id
+            // Switch her onto it, so the reward is immediately in her hand.
+            pen = newPen
+            board.pen = newPen
+            penBar.setPens(Pens.unlocked(for: learner), selected: newPen, animated: false)
+            penBar.select(newPen)
+            layoutPenBar()
+            settings.penId = newPen.id
             Store.save(learner, settings)
+
+            // The picker only appears with the second pen, so explain it once.
+            if isFirstExtraPen { await voice.say(Pen.pickerHint) }
         }
+        board.freeze(abort)
+    }
+
+    /// Put everything back to a first-run state.
+    ///
+    /// Pens are earned progress too. Resetting the learner without taking the
+    /// pens back means "reset" quietly spares the most visible thing on screen,
+    /// which is exactly how it read on device.
+    func resetProgress() {
+        learner = Learner()
+        demoedThisSession.removeAll()
+        trialsThisSession = 0
+        lastFailedShape = nil
+        sinceBig = 99
+        lastWasBig = false
+        lastBigKind = nil
+        helpSticky = false
+        helpButton.isHidden = true
+
+        pen = Pens.default
+        board.pen = pen
+        settings.penId = pen.id
+        penBar.setPens(Pens.unlocked(for: learner), selected: pen, animated: false)
+        layoutPenBar()
+        Store.save(learner, settings)
     }
 
     // MARK: - Grown-up panel
@@ -613,12 +682,7 @@ final class GameViewController: UIViewController {
                 sfx.enabled = s.sound
                 Store.save(learner, settings)
             },
-            onReset: { [weak self] in
-                guard let self else { return }
-                learner = Learner()
-                demoedThisSession.removeAll()
-                Store.save(learner, settings)
-            },
+            onReset: { [weak self] in self?.resetProgress() },
             onClose: { [weak self] in
                 self?.dismiss(animated: true) { [weak self] in
                     guard let self else { return }

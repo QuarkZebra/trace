@@ -14,7 +14,12 @@ final class Voice: NSObject, AVSpeechSynthesizerDelegate {
     private var chosen: AVSpeechSynthesisVoice?
 
     var enabled = true
-    var rate: Float = 0.44
+    /// A touch quicker than the system default, which drags for a game.
+    var rate: Float = 0.52
+    /// Well above natural, which is what reads as "excited" rather than
+    /// "assistant". Each line varies a little so repeated praise doesn't sound
+    /// like a recording.
+    var pitch: Float = 1.32
 
     override init() {
         super.init()
@@ -39,8 +44,8 @@ final class Voice: NSObject, AVSpeechSynthesizerDelegate {
         let u = AVSpeechUtterance(string: text)
         u.voice = chosen
         u.rate = rate
-        u.pitchMultiplier = 1.12
-        u.postUtteranceDelay = 0.05
+        u.pitchMultiplier = pitch + Float.random(in: -0.05...0.06)
+        u.postUtteranceDelay = 0.02
 
         let key = ObjectIdentifier(u)
         // Speech callbacks are reliable, but a wedged synthesiser would hang the

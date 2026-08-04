@@ -123,6 +123,70 @@ enum SelfTest {
                 Pens.unlocked(for: learner).count))
     }
 
+    /// How many trials before the corridor width finds a child's real level?
+    /// "It adapts eventually" is not the same as "it feels responsive".
+    static func checkResponsiveness() {
+        log("--- responsiveness (trials to reach the child's true width) ---")
+        for trueWidth in [CGFloat(9), 16, 26] {
+            var totalToConverge = 0
+            var runs = 0
+            for _ in 0..<40 {
+                let l = Learner()
+                var settled: Int?
+                for t in 1...60 {
+                    let plan = l.planTrial()
+                    // Sharp psychometric curve around the child's true width.
+                    let p = 1 / (1 + exp(-(plan.width - trueWidth) / 2.0))
+                    l.record(
+                        TrialRecord(
+                            win: CGFloat.random(in: 0..<1) < p, probe: plan.probe,
+                            width: plan.width, level: plan.level, shapeId: "s"))
+                    if settled == nil, abs(l.w85 - trueWidth) / trueWidth < 0.20 { settled = t }
+                }
+                if let s = settled {
+                    totalToConverge += s
+                    runs += 1
+                }
+            }
+            log(
+                String(
+                    format: "  true width %.0f: reached within 20%% in %@ trials (%d/40 runs)",
+                    trueWidth,
+                    runs > 0 ? String(format: "%.0f", Double(totalToConverge) / Double(runs)) : "—",
+                    runs))
+        }
+    }
+
+    /// No two pens may arrive at the same moment — each needs its own
+    /// celebration, and "you're at level purple now" only works if purple is the
+    /// only thing that just happened.
+    static func checkUnlockSpacing() {
+        log("--- unlock spacing ---")
+        var previous = Set<String>()
+        var clashes = 0
+        // Walk a plausible career: wins climbing, level rising with them.
+        for step in 0...80 {
+            let l = Learner()
+            l.totalWins = step
+            l.totalTrials = step + step / 6
+            l.level = min(Limits.maxLevel, 1 + step / 16)
+            for i in 0..<12 {
+                l.history.append(
+                    TrialRecord(win: i != 0, probe: false, width: 12, level: l.level, shapeId: "s"))
+            }
+            let now = Set(Pens.unlocked(for: l).map(\.id))
+            let fresh = now.subtracting(previous)
+            if fresh.count > 1 {
+                log("  CLASH at wins=\(step): \(fresh.sorted().joined(separator: ", "))")
+                clashes += 1
+            } else if fresh.count == 1 {
+                log("  wins=\(String(format: "%2d", step)) level=\(l.level) -> \(fresh.first!)")
+            }
+            previous = now
+        }
+        log(clashes == 0 ? "  no two pens ever arrive together" : "  \(clashes) clash(es)")
+    }
+
     /// The unlock ladder, at the milestones it's meant to fire on.
     static func checkPens() {
         log("--- pen unlocks ---")

@@ -144,6 +144,133 @@ final class CelebrationView: UIView {
         }
     }
 
+    // MARK: Unlocks
+
+    /// Paint thrown at the screen a few times until it's entirely the new
+    /// colour, then wiped away. The splats deliberately overlap and grow, so the
+    /// last one is what finally covers everything — it reads as the colour
+    /// arriving rather than a slideshow of blobs.
+    func paintSplatter(color: UIColor, then done: @escaping () -> Void) {
+        let splats = 6
+        let spread: [CGPoint] = [
+            CGPoint(x: 0.30, y: 0.35), CGPoint(x: 0.72, y: 0.28),
+            CGPoint(x: 0.22, y: 0.70), CGPoint(x: 0.78, y: 0.68),
+            CGPoint(x: 0.50, y: 0.48), CGPoint(x: 0.50, y: 0.50),
+        ]
+
+        for i in 0..<splats {
+            let at = CGPoint(
+                x: bounds.width * spread[i].x, y: bounds.height * spread[i].y)
+            // Each throw is bigger than the last; the final one is oversized so
+            // it fills whatever the others missed.
+            let reach = max(bounds.width, bounds.height)
+            let size = reach * (i == splats - 1 ? 2.6 : 0.55 + CGFloat(i) * 0.22)
+
+            after(Double(i) * 0.26) {
+                let l = CALayer()
+                l.contents = Self.splatImage.cgImage
+                l.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+                l.position = at
+                l.backgroundColor = UIColor.clear.cgColor
+                // Tint the greyscale splat with the pen's colour.
+                l.compositingFilter = nil
+                let tint = CALayer()
+                tint.frame = l.bounds
+                tint.backgroundColor = color.cgColor
+                tint.mask = {
+                    let m = CALayer()
+                    m.frame = l.bounds
+                    m.contents = Self.splatImage.cgImage
+                    return m
+                }()
+                l.addSublayer(tint)
+                l.setAffineTransform(CGAffineTransform(rotationAngle: CGFloat(i) * 1.1))
+                self.layer.addSublayer(l)
+                self.live.append(l)
+
+                let pop = CABasicAnimation(keyPath: "transform.scale")
+                pop.fromValue = 0.05
+                pop.toValue = 1.0
+                pop.duration = 0.34
+                pop.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                pop.fillMode = .forwards
+                pop.isRemovedOnCompletion = false
+                l.add(pop, forKey: "splat")
+                self.sfxTick?()
+            }
+        }
+
+        // Hold the full colour for a beat, then clear so the game reappears.
+        after(Double(splats) * 0.26 + 0.9) {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1
+            fade.toValue = 0
+            fade.duration = 0.45
+            fade.fillMode = .forwards
+            fade.isRemovedOnCompletion = false
+            self.live.forEach { $0.add(fade, forKey: "wipe") }
+            self.after(0.5) {
+                self.clear()
+                done()
+            }
+        }
+    }
+
+    /// The fine point pen draws itself in: a symmetrical burst of thin strokes,
+    /// because the thing being rewarded here is precision, not exuberance.
+    func drawnLines(color: UIColor, then done: @escaping () -> Void) {
+        let centre = CGPoint(x: bounds.midX, y: bounds.midY)
+        let reach = max(bounds.width, bounds.height) * 0.62
+        let spokes = 24
+
+        let path = CGMutablePath()
+        for i in 0..<spokes {
+            let a = CGFloat(i) / CGFloat(spokes) * .pi * 2
+            path.move(to: centre)
+            path.addLine(to: CGPoint(x: centre.x + cos(a) * reach, y: centre.y + sin(a) * reach))
+        }
+        for ring in 1...4 {
+            let r = reach * CGFloat(ring) / 4.6
+            path.addEllipse(in: CGRect(x: centre.x - r, y: centre.y - r, width: r * 2, height: r * 2))
+        }
+
+        let l = CAShapeLayer()
+        l.path = path
+        l.fillColor = nil
+        l.strokeColor = UIColor(white: 0.95, alpha: 0.9).cgColor
+        l.lineWidth = 2  // thin, to show off what the pen is for
+        l.lineCap = .round
+        layer.addSublayer(l)
+        live.append(l)
+
+        let draw = CABasicAnimation(keyPath: "strokeEnd")
+        draw.fromValue = 0
+        draw.toValue = 1
+        draw.duration = 1.5
+        draw.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        draw.fillMode = .forwards
+        draw.isRemovedOnCompletion = false
+        l.add(draw, forKey: "draw")
+
+        sparkles(at: centre, count: 24)
+        after(2.1) {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1
+            fade.toValue = 0
+            fade.duration = 0.5
+            fade.fillMode = .forwards
+            fade.isRemovedOnCompletion = false
+            l.add(fade, forKey: "wipe")
+            self.after(0.55) {
+                self.clear()
+                done()
+            }
+        }
+    }
+
+    /// Called as each splat lands, so the view doesn't need to own a synthesiser.
+    var sfxTick: (() -> Void)?
+
     // MARK: Pieces
 
     private func ring(at p: CGPoint) {
@@ -426,6 +553,43 @@ final class CelebrationView: UIView {
         UIGraphicsImageRenderer(size: CGSize(width: 12, height: 64)).image { c in
             c.cgContext.setFillColor(UIColor.white.cgColor)
             c.cgContext.fill(CGRect(x: 0, y: 0, width: 12, height: 64))
+        }
+    }()
+
+    /// An irregular paint splat: a lumpy centre plus a few flung droplets.
+    private static let splatImage: UIImage = {
+        let size = CGSize(width: 300, height: 300)
+        return UIGraphicsImageRenderer(size: size).image { c in
+            let ctx = c.cgContext
+            ctx.setFillColor(UIColor.white.cgColor)
+            let mid = CGPoint(x: 150, y: 150)
+
+            // Lumpy body — radius wobbles around the circle.
+            let path = CGMutablePath()
+            let lobes = 13
+            for i in 0...lobes {
+                let a = CGFloat(i) / CGFloat(lobes) * .pi * 2
+                let wobble = 1 + 0.26 * sin(a * 3.1) + 0.16 * cos(a * 5.7)
+                let r = 96 * wobble
+                let p = CGPoint(x: mid.x + cos(a) * r, y: mid.y + sin(a) * r)
+                i == 0 ? path.move(to: p) : path.addLine(to: p)
+            }
+            path.closeSubpath()
+            ctx.addPath(path)
+            ctx.fillPath()
+
+            // Droplets, deterministic so every splat isn't identical but none
+            // depends on a random seed at draw time.
+            let drops: [(CGFloat, CGFloat, CGFloat)] = [
+                (0.4, 132, 15), (1.5, 120, 10), (2.4, 140, 18), (3.3, 126, 9),
+                (4.1, 145, 13), (5.0, 118, 16), (5.8, 138, 11),
+            ]
+            for (angle, dist, r) in drops {
+                ctx.fillEllipse(
+                    in: CGRect(
+                        x: mid.x + cos(angle) * dist - r, y: mid.y + sin(angle) * dist - r,
+                        width: r * 2, height: r * 2))
+            }
         }
     }()
 

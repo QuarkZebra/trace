@@ -85,7 +85,66 @@ final class Learner: Codable {
     var totalTrials: Int = 0
     var totalWins: Int = 0
 
+    /// Corridor width remembered per shape level. Difficulty is really the pair
+    /// (how complex a shape, how wide the track), so moving up a level and back
+    /// down shouldn't throw away what we already learned about each band —
+    /// otherwise every level change restarts the search and the width stops
+    /// looking like it responds to anything.
+    var widthByLevel: [Int: CGFloat] = [:]
+
+    /// Trials since the level last changed. Steps start large and settle, so a
+    /// new band is found in a few goes instead of a few dozen.
+    var sinceLevelChange: Int = 0
+
+    /// Direction changes since arriving at this level. Until the width has
+    /// over- and under-shot a couple of times we're still bracketing, and big
+    /// symmetric steps get there far faster than the converged rule: the 5.7-to-1
+    /// asymmetry that makes the estimate settle on 85% also makes it crawl
+    /// downwards, which took 40-odd trials to reach a genuinely tight corridor.
+    var reversalsAtLevel: Int = 0
+    var lastMoveWasDown: Bool? = nil
+
     init() {}
+
+    // Decoded field-by-field so a save written by an older build still loads
+    // instead of silently resetting a child's progress.
+    private enum CodingKeys: String, CodingKey {
+        case w85, level, history, sinceProbe, lastWasProbe, recentShapes
+        case creativeSeed, totalTrials, totalWins, widthByLevel, sinceLevelChange
+        case reversalsAtLevel, lastMoveWasDown
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        w85 = try c.decodeIfPresent(CGFloat.self, forKey: .w85) ?? Limits.startWidth
+        level = try c.decodeIfPresent(Int.self, forKey: .level) ?? 1
+        history = try c.decodeIfPresent([TrialRecord].self, forKey: .history) ?? []
+        sinceProbe = try c.decodeIfPresent(Int.self, forKey: .sinceProbe) ?? 0
+        lastWasProbe = try c.decodeIfPresent(Bool.self, forKey: .lastWasProbe) ?? false
+        recentShapes = try c.decodeIfPresent([String].self, forKey: .recentShapes) ?? []
+        creativeSeed = try c.decodeIfPresent(UInt32.self, forKey: .creativeSeed) ?? 1
+        totalTrials = try c.decodeIfPresent(Int.self, forKey: .totalTrials) ?? 0
+        totalWins = try c.decodeIfPresent(Int.self, forKey: .totalWins) ?? 0
+        widthByLevel = try c.decodeIfPresent([Int: CGFloat].self, forKey: .widthByLevel) ?? [:]
+        sinceLevelChange = try c.decodeIfPresent(Int.self, forKey: .sinceLevelChange) ?? 0
+        reversalsAtLevel = try c.decodeIfPresent(Int.self, forKey: .reversalsAtLevel) ?? 0
+        lastMoveWasDown = try c.decodeIfPresent(Bool.self, forKey: .lastMoveWasDown)
+    }
+
+    /// Move to a different shape level, keeping each level's own width estimate.
+    private func changeLevel(to newLevel: Int) {
+        widthByLevel[level] = w85
+        level = newLevel
+        // A harder band needs a wider track to start from; an easier one we've
+        // seen before starts wherever we left it. Capped at the opening width so
+        // promotions can't ratchet the corridor out to the maximum, which had it
+        // bouncing between levels.
+        w85 = clamp(widthByLevel[newLevel] ?? min(Limits.startWidth, w85 * 1.4))
+        sinceLevelChange = 0
+        reversalsAtLevel = 0
+        lastMoveWasDown = nil
+        history.removeAll()
+    }
 
     /// Observed accuracy over the last `n` trials, or nil if there are too few.
     func recentAccuracy(_ n: Int = window) -> CGFloat? {
@@ -165,7 +224,26 @@ final class Learner: Codable {
         case (true, true): (dir, k) = (-1, 1.0)
         case (true, false): (dir, k) = (1, 0.15 * upRatio)
         }
-        let factor = min(maxStepFactor, max(1 / maxStepFactor, 1 + dir * baseStep * k))
+        sinceLevelChange += 1
+
+        // Two phases. While still bracketing — before the width has over- and
+        // under-shot twice — take big, near-symmetric steps to find the right
+        // neighbourhood fast. Once bracketed, switch to the Kaernbach-weighted
+        // rule that actually converges on 85%. Using the converged rule from the
+        // start is what made the width look inert.
+        let factor: CGFloat
+        if reversalsAtLevel < 2 {
+            factor = dir < 0 ? 0.86 : 1.28
+        } else {
+            let eagerness = 1 + 1.0 * exp(-CGFloat(sinceLevelChange) / 8)
+            factor = min(
+                maxStepFactor, max(1 / maxStepFactor, 1 + dir * baseStep * eagerness * k))
+        }
+
+        let movingDown = dir < 0
+        if let previous = lastMoveWasDown, previous != movingDown { reversalsAtLevel += 1 }
+        lastMoveWasDown = movingDown
+
         w85 = clamp(w85 * factor)
 
         regulate()
@@ -173,27 +251,26 @@ final class Learner: Codable {
 
     private func regulate() {
         guard let acc = recentAccuracy() else { return }
+        // Give a new level time to settle before considering another move, or a
+        // capable child ping-pongs between bands instead of progressing.
+        let mayChangeLevel = sinceLevelChange >= 8
 
         if acc > Limits.target + 0.03 {
             // Too easy for a sustained stretch. Tighten — and once the corridor
             // is already tight, promote to harder shapes and hand back some
             // width rather than narrowing further.
-            if (w85 <= Limits.levelUpWidth || acc >= Limits.levelUpAccuracy)
+            if mayChangeLevel && (w85 <= Limits.levelUpWidth || acc >= Limits.levelUpAccuracy)
                 && level < Limits.maxLevel
             {
-                level += 1
-                w85 = clamp(min(w85 * 1.35, Limits.startWidth * 0.8))
-                history.removeAll()
+                changeLevel(to: level + 1)
             } else {
                 w85 = clamp(w85 * 0.94)
             }
         } else if acc < Limits.target - 0.08 {
             // Missing too often. Widen; if we're already at the ceiling, the
             // shapes themselves are the problem, so step back down a level.
-            if w85 >= Limits.maxWidth * 0.92 && level > 1 {
-                level -= 1
-                w85 = clamp(Limits.startWidth)
-                history.removeAll()
+            if mayChangeLevel && w85 >= Limits.maxWidth * 0.92 && level > 1 {
+                changeLevel(to: level - 1)
             } else {
                 w85 = clamp(w85 * 1.05)
             }
@@ -213,7 +290,7 @@ struct Settings: Codable {
     }
     var voice = true
     var sound = true
-    var rate: Float = 0.44  // AVSpeechUtterance rate; ~0.5 is the system default
+    var rate: Float = 0.52  // AVSpeechUtterance rate; ~0.5 is the system default
     var focus: Focus = .mix
     var penId: String = "blueberry"
 }

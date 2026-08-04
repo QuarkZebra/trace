@@ -56,7 +56,7 @@ struct ParentPanel: View {
                 Toggle("Sound effects", isOn: $settings.sound)
                 VStack(alignment: .leading) {
                     Text("Talking speed")
-                    Slider(value: $settings.rate, in: 0.3...0.6)
+                    Slider(value: $settings.rate, in: 0.35...0.68)
                 }
             }
 

@@ -16,10 +16,29 @@ struct Pen: Equatable {
     /// Multiplies the normal line thickness. The precision pen is half.
     let widthScale: CGFloat
     let unlock: Unlock
+    let style: UnlockStyle
 
     static func == (a: Pen, b: Pen) -> Bool { a.id == b.id }
 
     var isRainbow: Bool { colors.count > 1 }
+
+    /// Said when this pen is earned. Praise names the effort, because that's the
+    /// part she controls and the part we want repeated.
+    var announcement: String {
+        switch style {
+        case .paintSplatter:
+            return "You're working so hard, you're at level \(name) now!"
+        case .drawnLines:
+            return "You're working so hard, you're straight awesome. You earned this fine point pen."
+        case .rainbow:
+            return "You worked so hard on your letters. You earned the rainbow pen!"
+        }
+    }
+
+    /// Added the first time she gets a second pen, since that's the moment the
+    /// picker appears and it needs explaining once.
+    static let pickerHint =
+        "You can change your colour at the bottom. Just touch the one you want."
 }
 
 enum Unlock {
@@ -44,50 +63,46 @@ enum Unlock {
             return learner.totalWins >= 60 && (learner.recentAccuracy() ?? 0) >= 0.8
         }
     }
+}
 
-    /// What the app says when this one opens up.
-    var announcement: String {
-        switch self {
-        case .always:
-            return ""
-        case .wins:
-            return "Look! Your careful tracing earned you a new colour."
-        case .level(let n) where n <= 2:
-            return "You're doing real shapes now! Here's a new colour, and a skinny pencil for tricky ones."
-        case .level:
-            return "You're tracing letters! That's big-kid work. Two new colours for you."
-        case .lettersMastered:
-            return "You worked so hard on your letters. You unlocked the rainbow pen!"
-        }
-    }
+/// How a pen announces itself. Colours get paint thrown at the screen until it
+/// is entirely their colour; the fine point draws itself in, because what it's
+/// actually rewarding is control rather than exuberance.
+enum UnlockStyle {
+    case paintSplatter
+    case drawnLines
+    case rainbow
 }
 
 enum Pens {
+    // Deliberately staggered so no two ever arrive together. Each one gets its
+    // own moment, and "you're at level purple now" only makes sense if purple is
+    // the only thing that just happened.
     static let all: [Pen] = [
         Pen(
             id: "blueberry", name: "blueberry",
             colors: [UIColor(red: 0.169, green: 0.184, blue: 0.478, alpha: 1)],
-            widthScale: 1, unlock: .always),
+            widthScale: 1, unlock: .always, style: .paintSplatter),
         Pen(
-            id: "grape", name: "grape",
+            id: "grape", name: "purple",
             colors: [UIColor(red: 0.486, green: 0.227, blue: 0.929, alpha: 1)],
-            widthScale: 1, unlock: .wins(8)),
+            widthScale: 1, unlock: .wins(8), style: .paintSplatter),
         Pen(
             id: "mint", name: "mint",
             colors: [UIColor(red: 0.059, green: 0.608, blue: 0.557, alpha: 1)],
-            widthScale: 1, unlock: .level(2)),
+            widthScale: 1, unlock: .level(2), style: .paintSplatter),
         Pen(
-            id: "skinny", name: "skinny pencil",
-            colors: [UIColor(red: 0.247, green: 0.247, blue: 0.275, alpha: 1)],
-            widthScale: 0.5, unlock: .level(2)),
+            id: "skinny", name: "fine point",
+            colors: [UIColor(red: 0.325, green: 0.353, blue: 0.478, alpha: 1)],
+            widthScale: 0.5, unlock: .level(3), style: .drawnLines),
         Pen(
-            id: "bubblegum", name: "bubblegum",
+            id: "bubblegum", name: "pink",
             colors: [UIColor(red: 0.878, green: 0.204, blue: 0.545, alpha: 1)],
-            widthScale: 1, unlock: .level(4)),
+            widthScale: 1, unlock: .level(4), style: .paintSplatter),
         Pen(
-            id: "mango", name: "mango",
+            id: "mango", name: "orange",
             colors: [UIColor(red: 0.976, green: 0.451, blue: 0.086, alpha: 1)],
-            widthScale: 1, unlock: .level(4)),
+            widthScale: 1, unlock: .wins(55), style: .paintSplatter),
         Pen(
             id: "rainbow", name: "rainbow",
             colors: [
@@ -100,7 +115,7 @@ enum Pens {
                 UIColor(red: 0.545, green: 0.361, blue: 0.965, alpha: 1),
                 UIColor(red: 0.925, green: 0.282, blue: 0.600, alpha: 1),
             ],
-            widthScale: 1, unlock: .lettersMastered),
+            widthScale: 1, unlock: .lettersMastered, style: .rainbow),
     ]
 
     static let `default` = all[0]
