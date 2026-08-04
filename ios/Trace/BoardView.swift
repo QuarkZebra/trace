@@ -69,16 +69,32 @@ final class BoardView: UIView {
     // MARK: Layers
     private let corridorLayer = CALayer()
     private let bakedInkLayer = CALayer()
-    private let liveInLayer = CAShapeLayer()
     private let liveOutLayer = CAShapeLayer()
     private let predictLayer = CAShapeLayer()
     private let trailLayer = CAShapeLayer()
     private let demoDotLayer = CALayer()
     private var markerLayers: [CALayer] = []
 
-    private var liveIn = CGMutablePath()
+    // One layer per pen colour. A plain pen has a single one; the rainbow has
+    // several and segments are filed into whichever colour is current, so the
+    // colour cycles along the line without costing anything per frame.
+    private var penLayers: [CAShapeLayer] = []
+    private var penPaths: [CGMutablePath] = []
     private var liveOut = CGMutablePath()
     private var livePointCount = 0
+    private var inkDistance: CGFloat = 0
+
+    /// How far the line travels before the rainbow moves to the next colour.
+    private let rainbowCycle: CGFloat = 16
+
+    var pen: Pen = Pens.default {
+        didSet {
+            guard pen != oldValue else { return }
+            bakeLive()
+            rebuildPenLayers()
+            applyLineWidths()
+        }
+    }
 
     private var inkCtx: CGContext?
     private var demoTask: Task<Bool, Never>?
@@ -104,25 +120,51 @@ final class BoardView: UIView {
             l.contentsGravity = .resize
             layer.addSublayer(l)
         }
-        for l in [liveOutLayer, liveInLayer, predictLayer, trailLayer] {
+        for l in [liveOutLayer, predictLayer, trailLayer] {
             l.fillColor = nil
             l.lineCap = .round
             l.lineJoin = .round
             layer.addSublayer(l)
         }
-        liveInLayer.strokeColor = Ink.inside.cgColor
-        predictLayer.strokeColor = Ink.inside.cgColor
         liveOutLayer.strokeColor = Ink.outside.cgColor
         trailLayer.strokeColor = Ink.demo.withAlphaComponent(0.45).cgColor
+        rebuildPenLayers()
 
         demoDotLayer.isHidden = true
         layer.addSublayer(demoDotLayer)
         trailLayer.isHidden = true
     }
 
+    private func rebuildPenLayers() {
+        penLayers.forEach { $0.removeFromSuperlayer() }
+        penLayers = pen.colors.map { colour in
+            let l = CAShapeLayer()
+            l.fillColor = nil
+            l.lineCap = .round
+            l.lineJoin = .round
+            l.strokeColor = colour.cgColor
+            l.frame = bounds
+            l.contentsScale = window?.screen.scale ?? 2
+            // Below the out-of-bounds layer, so a red excursion always reads on
+            // top of the pen colour it crossed.
+            layer.insertSublayer(l, below: liveOutLayer)
+            return l
+        }
+        penPaths = pen.colors.map { _ in CGMutablePath() }
+        predictLayer.strokeColor = pen.colors[0].cgColor
+    }
+
+    private func applyLineWidths() {
+        guard let t = trial else { return }
+        let lw = min(26, max(7, t.corridorPx * 0.3)) * pen.widthScale
+        for l in penLayers { l.lineWidth = lw }
+        liveOutLayer.lineWidth = lw
+        predictLayer.lineWidth = lw
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        for l in [corridorLayer, bakedInkLayer, liveInLayer, liveOutLayer, predictLayer, trailLayer] {
+        for l in [corridorLayer, bakedInkLayer, liveOutLayer, predictLayer, trailLayer] + penLayers {
             l.frame = bounds
             l.contentsScale = window?.screen.scale ?? 2
         }
@@ -151,17 +193,20 @@ final class BoardView: UIView {
         insideLen = 0
         outsideLen = 0
         drawnLen = 0
+        inkDistance = 0
         isDrawing = false
         activeTouch = nil
         lastPoint = nil
         lastInside = true
         frozen = false
 
-        let lw = min(26, max(7, t.corridorPx * 0.3))
-        for l in [liveInLayer, liveOutLayer, predictLayer] { l.lineWidth = lw }
+        applyLineWidths()
         trailLayer.lineWidth = t.corridorPx * 0.42
 
         makeInkContext()
+        // The baked layer holds the previous shape's ink until told otherwise —
+        // a fresh bitmap alone doesn't clear what's already on screen.
+        bakedInkLayer.contents = nil
         clearLivePaths()
         corridorLayer.contents = renderCorridor(t)?.cgImage
         buildMarkers(t)
@@ -173,6 +218,7 @@ final class BoardView: UIView {
         insideLen = 0
         outsideLen = 0
         drawnLen = 0
+        inkDistance = 0
         lastPoint = nil
         makeInkContext()
         bakedInkLayer.contents = nil
@@ -198,12 +244,18 @@ final class BoardView: UIView {
     }
 
     private func clearLivePaths() {
-        liveIn = CGMutablePath()
+        penPaths = pen.colors.map { _ in CGMutablePath() }
         liveOut = CGMutablePath()
         livePointCount = 0
-        liveInLayer.path = nil
+        for l in penLayers { l.path = nil }
         liveOutLayer.path = nil
         predictLayer.path = nil
+    }
+
+    /// Which pen colour a point at this distance along the line gets.
+    private func colourIndex(at distance: CGFloat) -> Int {
+        guard pen.isRainbow else { return 0 }
+        return Int(distance / rainbowCycle) % pen.colors.count
     }
 
     // MARK: - Corridor rendering
@@ -468,7 +520,7 @@ final class BoardView: UIView {
         let p = touch.preciseLocation(in: self)
         lastPoint = p
         lastInside = corridorMask?.contains(p.x, p.y) ?? false
-        liveIn.move(to: p)
+        for path in penPaths { path.move(to: p) }
         liveOut.move(to: p)
         markCoverage(p)
         refreshMarkers()
@@ -540,12 +592,14 @@ final class BoardView: UIView {
             }
 
             if inside {
-                liveIn.move(to: prev)
-                liveIn.addLine(to: q)
+                let i = colourIndex(at: inkDistance)
+                penPaths[i].move(to: prev)
+                penPaths[i].addLine(to: q)
             } else {
                 liveOut.move(to: prev)
                 liveOut.addLine(to: q)
             }
+            inkDistance += d
             livePointCount += 1
 
             if lastInside && !inside { onLeave?() }
@@ -557,7 +611,7 @@ final class BoardView: UIView {
     }
 
     private func commitLive() {
-        liveInLayer.path = liveIn
+        for (i, l) in penLayers.enumerated() where i < penPaths.count { l.path = penPaths[i] }
         liveOutLayer.path = liveOut
         // A path that grows without bound gets slower to rasterise every frame,
         // so fold it into the bitmap periodically and start a fresh one.
@@ -567,11 +621,12 @@ final class BoardView: UIView {
     /// Fold the live stroke into the committed bitmap and reset the live paths.
     private func bakeLive() {
         guard let ctx = inkCtx, livePointCount > 0 else { return }
-        let lw = min(26, max(7, (trial?.corridorPx ?? 30) * 0.3))
-        ctx.setLineWidth(lw)
-        ctx.setStrokeColor(Ink.inside.cgColor)
-        ctx.addPath(liveIn)
-        ctx.strokePath()
+        ctx.setLineWidth(min(26, max(7, (trial?.corridorPx ?? 30) * 0.3)) * pen.widthScale)
+        for (i, path) in penPaths.enumerated() where i < pen.colors.count {
+            ctx.setStrokeColor(pen.colors[i].cgColor)
+            ctx.addPath(path)
+            ctx.strokePath()
+        }
         ctx.setStrokeColor(Ink.outside.cgColor)
         ctx.addPath(liveOut)
         ctx.strokePath()
@@ -680,7 +735,7 @@ final class BoardView: UIView {
                 if i == 0 {
                     lastPoint = pt
                     lastInside = corridorMask?.contains(pt.x, pt.y) ?? false
-                    liveIn.move(to: pt)
+                    for path in penPaths { path.move(to: pt) }
                     liveOut.move(to: pt)
                     markCoverage(pt)
                 } else {

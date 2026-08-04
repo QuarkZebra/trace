@@ -96,6 +96,59 @@ enum SelfTest {
         log("checked \(checked) shapes, \(problems) problem(s)")
     }
 
+    /// Does a child who's doing well actually SEE it get harder? The controller
+    /// can be statistically correct and still feel inert, which is what the
+    /// first round of testing on device reported.
+    static func checkProgression() {
+        log("--- progression (a child winning ~95% of the time) ---")
+        let learner = Learner()
+        var line = ""
+        for t in 1...30 {
+            let plan = learner.planTrial()
+            let win = CGFloat.random(in: 0..<1) < 0.95
+            learner.record(
+                TrialRecord(
+                    win: win, probe: plan.probe, width: plan.width, level: plan.level,
+                    shapeId: "s"))
+            if t % 5 == 0 {
+                line += String(format: "  t%02d: gap=%.1f level=%d", t, learner.w85, learner.level)
+                log(line)
+                line = ""
+            }
+        }
+        log(
+            String(
+                format: "after 30 trials: gap %.1f (from %.1f), level %d, pens %d",
+                learner.w85, Limits.startWidth, learner.level,
+                Pens.unlocked(for: learner).count))
+    }
+
+    /// The unlock ladder, at the milestones it's meant to fire on.
+    static func checkPens() {
+        log("--- pen unlocks ---")
+        let stages: [(String, Int, Int, Int)] = [
+            // label, totalWins, totalTrials, level
+            ("fresh start", 0, 0, 1),
+            ("8 wins", 8, 10, 1),
+            ("standard shapes", 14, 16, 2),
+            ("letters", 40, 46, 4),
+            ("letters mastered", 60, 66, 5),
+        ]
+        for (label, wins, trials, level) in stages {
+            let l = Learner()
+            l.totalWins = wins
+            l.totalTrials = trials
+            l.level = level
+            // Recent history so lettersMastered can evaluate accuracy.
+            for i in 0..<12 {
+                l.history.append(
+                    TrialRecord(win: i != 0, probe: false, width: 10, level: level, shapeId: "s"))
+            }
+            let names = Pens.unlocked(for: l).map(\.name).joined(separator: ", ")
+            log("  \(label.padding(toLength: 18, withPad: " ", startingAt: 0)) \(names)")
+        }
+    }
+
     /// The 85% controller against a simulated child whose skill is fixed.
     static func checkAdaptation() {
         log("--- adaptation ---")
@@ -149,6 +202,9 @@ enum SelfTest {
         log("--- trial loop ---")
         var capViolations = 0
         var seen = Set<String>()
+        var repeats = 0
+        var previousShape = ""
+        var widths: [CGFloat] = []
 
         for i in 0..<n {
             var guardCount = 0
@@ -159,6 +215,7 @@ enum SelfTest {
             guard let t = board.trial else { break }
             let before = learner().totalTrials
             seen.insert(t.shape.id)
+            widths.append(t.corridorUnits)
             if let cap = t.shape.maxWidth, t.corridorUnits > cap + 0.01 {
                 log("  CAP VIOLATION \(t.shape.id) at \(t.corridorUnits) > \(cap)")
                 capViolations += 1
@@ -186,6 +243,17 @@ enum SelfTest {
                 l.totalTrials, seen.count, capViolations,
                 l.totalTrials > 0 ? Double(l.totalWins) / Double(l.totalTrials) * 100 : 0,
                 l.level, l.w85))
+        // Count repeats from what was actually *recorded*, not from whatever was
+        // on the board when this loop looked — the tracer runs faster than the
+        // game advances, so polling the board double-counts a single trial.
+        for (a, b) in zip(l.history, l.history.dropFirst()) where a.shapeId == b.shapeId {
+            repeats += 1
+        }
+        _ = previousShape
+        log(
+            String(
+                format: "back-to-back repeats: %d of %d   gap first->last: %.1f -> %.1f", repeats,
+                max(0, l.history.count - 1), widths.first ?? 0, widths.last ?? 0))
         log("DONE")
     }
 }

@@ -184,4 +184,9 @@ final class Sfx {
     func tick() {
         play([Tone(freq: 1200, start: 0, dur: 0.05, gain: 0.04)])
     }
+
+    /// Picking up a different pen.
+    func pop() {
+        play([Tone(freq: 880, start: 0, dur: 0.09, gain: 0.07, square: true)])
+    }
 }

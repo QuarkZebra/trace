@@ -52,10 +52,25 @@ enum Limits {
 
     /// Once the corridor is this tight, further narrowing only tests fine motor
     /// control the child has already shown. Promote them instead.
-    static let levelUpWidth: CGFloat = 11
+    static let levelUpWidth: CGFloat = 13
+
+    /// Sustained accuracy this high promotes regardless of width. Without it a
+    /// child who misses now and then can sit at the same level indefinitely —
+    /// the staircase stays honest, but nothing visibly progresses, which reads
+    /// as "the game isn't doing anything".
+    static let levelUpAccuracy: CGFloat = 0.95
 }
 
-private let baseStep: CGFloat = 0.035
+// The Kaernbach ratio has to be preserved for the staircase to converge on 85%,
+// which means an up-step is ~5.7 down-steps. That makes the base step size the
+// only real dial, and it can't be large: at 0.055 a single miss moved the width
+// 40% in one trial, which both looked erratic and overshot the target. Speed of
+// visible progress comes from the slow regulator instead, which moves on
+// evidence from a dozen trials rather than one.
+private let baseStep: CGFloat = 0.04
+
+/// No single trial may move the estimate more than this, in either direction.
+private let maxStepFactor: CGFloat = 1.25
 private let upRatio = Limits.target / (1 - Limits.target)  // ≈ 5.67
 private let window = 12
 
@@ -90,6 +105,11 @@ final class Learner: Codable {
         if lastWasProbe { return false }
         let lastTwo = history.suffix(2)
         if lastTwo.count == 2 && lastTwo.allSatisfy({ !$0.win }) { return false }
+        // Already at the widest corridor and the easiest shapes: the task can't
+        // get any easier, so there's no headroom above threshold for a probe to
+        // sit below. Spending one trial in six on a near-certain miss would just
+        // drag a struggling child further under 85% for no information.
+        if w85 >= Limits.maxWidth * 0.95 && level == 1 { return false }
         if sinceProbe >= 9 { return true }
         return CGFloat.random(in: 0..<1) < 1.0 / 6.0
     }
@@ -114,7 +134,7 @@ final class Learner: Codable {
                 width = w85 * 0.82 * jitter
             }
         } else {
-            width = w85 * CGFloat.random(in: 1.22...1.40) * jitter
+            width = w85 * CGFloat.random(in: 1.18...1.32) * jitter
             // Occasionally reach down a level for a confidence builder.
             if level > 1 && CGFloat.random(in: 0..<1) < 0.18 { lvl = level - 1 }
         }
@@ -141,11 +161,12 @@ final class Learner: Codable {
         let (dir, k): (CGFloat, CGFloat)
         switch (r.probe, r.win) {
         case (false, true): (dir, k) = (-1, 0.35)
-        case (false, false): (dir, k) = (1, 1.3 * upRatio)
+        case (false, false): (dir, k) = (1, upRatio)
         case (true, true): (dir, k) = (-1, 1.0)
         case (true, false): (dir, k) = (1, 0.15 * upRatio)
         }
-        w85 = clamp(w85 * (1 + dir * baseStep * k))
+        let factor = min(maxStepFactor, max(1 / maxStepFactor, 1 + dir * baseStep * k))
+        w85 = clamp(w85 * factor)
 
         regulate()
     }
@@ -157,12 +178,14 @@ final class Learner: Codable {
             // Too easy for a sustained stretch. Tighten — and once the corridor
             // is already tight, promote to harder shapes and hand back some
             // width rather than narrowing further.
-            if w85 <= Limits.levelUpWidth && level < Limits.maxLevel {
+            if (w85 <= Limits.levelUpWidth || acc >= Limits.levelUpAccuracy)
+                && level < Limits.maxLevel
+            {
                 level += 1
-                w85 = clamp(Limits.startWidth * 0.85)
+                w85 = clamp(min(w85 * 1.35, Limits.startWidth * 0.8))
                 history.removeAll()
             } else {
-                w85 = clamp(w85 * 0.97)
+                w85 = clamp(w85 * 0.94)
             }
         } else if acc < Limits.target - 0.08 {
             // Missing too often. Widen; if we're already at the ceiling, the
@@ -192,6 +215,7 @@ struct Settings: Codable {
     var sound = true
     var rate: Float = 0.44  // AVSpeechUtterance rate; ~0.5 is the system default
     var focus: Focus = .mix
+    var penId: String = "blueberry"
 }
 
 enum Store {

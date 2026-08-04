@@ -60,12 +60,15 @@ enum Lines {
         return "Now the next part."
     }
 
+    /// Offered only when she's stalled — after the first few trials we stop
+    /// demonstrating unprompted and ask instead.
     static func idleNudge() -> String {
         pick(
             "idle",
             [
-                "Tap the yellow button if you'd like me to show you again.",
-                "Need to see it again? Tap the yellow button.",
+                "Would you like me to show you? Tap the yellow button.",
+                "Want to see it first? Tap the yellow button.",
+                "Shall I show you how? Tap the yellow button.",
             ])
     }
 
@@ -79,14 +82,6 @@ enum Lines {
             ])
     }
 
-    static func bigPraise() -> String {
-        pick(
-            "bigPraise",
-            [
-                "Amazing! Look at that!", "Fantastic tracing! Balloons for you!",
-                "Superstar! That was so smooth!", "Incredible! Confetti time!",
-            ])
-    }
 
     /// Near-miss coaching: a warm opener, then exactly one short physical
     /// instruction. Long explanations lose a four-year-old.

@@ -9,10 +9,15 @@ private enum AttemptOutcome { case done, settled, panel }
 private nonisolated(unsafe) var selfTestKey: UInt8 = 0
 #endif
 
-// Celebration cadence: about one big one in every three or four wins, never
-// twice running, guaranteed if it's been a while.
-private let bigChance: CGFloat = 0.29
-private let bigForceAfter = 5
+// Celebration cadence: one big one in about every four wins, never twice
+// running, guaranteed if it's been a while.
+private let bigChance: CGFloat = 0.25
+private let bigForceAfter = 6
+
+/// How many trials get an unprompted demonstration at the start of a session.
+/// After that she's shown she knows the game, and the demo becomes something
+/// she asks for via the button rather than something imposed on every shape.
+private let autoDemoTrials = 3
 
 private let idleDelay: Double = 4.5  // no touch after the prompt -> offer the replay button
 private let settleDelay: Double = 2.6  // pen up on an unfinished shape -> judge what we have
@@ -30,11 +35,16 @@ final class GameViewController: UIViewController {
     private let voice = Voice()
     private let sfx = Sfx()
 
+    private let penBar = PenBarView()
+    private var pen = Pens.default
+
     private var loopTask: Task<Void, Never>?
     private var abort = false
     private var demoedThisSession = Set<String>()
+    private var trialsThisSession = 0
     private var sinceBig = 99
     private var lastWasBig = false
+    private var lastBigKind: BigCelebration?
     private var helpSticky = false
     private var lastFailedShape: String?
 
@@ -62,6 +72,7 @@ final class GameViewController: UIViewController {
         view.addSubview(fx)
 
         setUpHelpButton()
+        setUpPenBar()
         setUpStartOverlay()
 
         // Grown-up settings sit behind a long press in the corner, where a child
@@ -97,11 +108,34 @@ final class GameViewController: UIViewController {
         {
             // Park a named shape on screen so a screenshot can check its look.
             startOverlay.isHidden = true
+            if ProcessInfo.processInfo.arguments.contains("-unlockall") {
+                learner.totalWins = 80
+                learner.totalTrials = 90
+                learner.level = Limits.maxLevel
+                for i in 0..<12 {
+                    learner.history.append(
+                        TrialRecord(win: i != 0, probe: false, width: 12, level: 5, shapeId: "s"))
+                }
+                let all = Pens.unlocked(for: learner)
+                pen = all.last ?? Pens.default
+                board.pen = pen
+                penBar.setPens(all, selected: pen, animated: false)
+                layoutPenBar()
+            }
             board.setTrial(shape: shape, corridorUnits: 16)
             if ProcessInfo.processInfo.arguments.contains("-traced") {
                 board.simulateTrace(wobble: 0.34)
                 let j = board.judge()
                 print("SELFTEST traced \(shape.id): win=\(j.win) reason=\(j.reason.rawValue)")
+            }
+            // Trace one shape then move to the next, to prove the previous
+            // child's line doesn't linger on the new shape.
+            if let k = ProcessInfo.processInfo.arguments.firstIndex(of: "-thenshape"),
+                k + 1 < ProcessInfo.processInfo.arguments.count,
+                let next = ShapeLibrary.byId(ProcessInfo.processInfo.arguments[k + 1])
+            {
+                board.setTrial(shape: next, corridorUnits: 16)
+                print("SELFTEST advanced to \(next.id), drawnLen=\(Int(board.drawnLen))")
             }
         }
         #endif
@@ -122,6 +156,8 @@ final class GameViewController: UIViewController {
         skipDemoForTest = true
         learner = Learner()
 
+        SelfTest.checkProgression()
+        SelfTest.checkPens()
         SelfTest.checkStartArrows(board: board)
         SelfTest.checkShapes()
         SelfTest.checkAdaptation()
@@ -152,6 +188,30 @@ final class GameViewController: UIViewController {
         helpButton.addTarget(self, action: #selector(helpTapped), for: .touchUpInside)
         helpButton.accessibilityLabel = "Show me again"
         view.addSubview(helpButton)
+    }
+
+    private func setUpPenBar() {
+        pen = Pens.byId(settings.penId)
+        let available = Pens.unlocked(for: learner)
+        if !available.contains(pen) { pen = Pens.default }
+        board.pen = pen
+        penBar.setPens(available, selected: pen, animated: false)
+        penBar.onSelect = { [weak self] chosen in
+            guard let self else { return }
+            pen = chosen
+            board.pen = chosen
+            settings.penId = chosen.id
+            Store.save(learner, settings)
+            sfx.pop()
+        }
+        view.addSubview(penBar)
+    }
+
+    private func layoutPenBar() {
+        let inset = view.safeAreaInsets
+        penBar.frame.origin = CGPoint(
+            x: 24 + inset.left,
+            y: view.bounds.height - penBar.bounds.height - 16 - inset.bottom)
     }
 
     private func setUpStartOverlay() {
@@ -209,6 +269,7 @@ final class GameViewController: UIViewController {
             x: view.bounds.width - 96 - 24 - inset.right,
             y: view.bounds.height - 96 - 24 - inset.bottom,
             width: 96, height: 96)
+        layoutPenBar()
     }
 
     // MARK: - Session
@@ -273,12 +334,21 @@ final class GameViewController: UIViewController {
 
         let roomy = pool.filter { fits($0, width) }
         if !roomy.isEmpty { pool = roomy }
-        let fresh = pool.filter { !learner.recentShapes.contains($0.id) }
+
+        // Avoid repeats — but a small pool can't honour a long memory. At level
+        // one there are only five shapes and the recent list holds eight, so
+        // filtering by all of them left nothing and fell back to the whole pool,
+        // which is how the same shape came up twice in a row. Keep the window
+        // strictly smaller than the pool so there's always a fresh option.
+        let avoid = max(0, min(learner.recentShapes.count, pool.count - 1))
+        let recent = Set(avoid > 0 ? learner.recentShapes.suffix(avoid) : [])
+        let fresh = pool.filter { !recent.contains($0.id) }
         return (fresh.isEmpty ? pool : fresh).randomElement() ?? pool[0]
     }
 
     private func runTrial() async -> AttemptOutcome {
         abort = false
+        trialsThisSession += 1
         var plan = learner.planTrial()
         let shape = chooseShape(level: plan.level, width: plan.width)
         // Honour the shape's cap even when nothing in the pool could take the
@@ -288,11 +358,10 @@ final class GameViewController: UIViewController {
         board.setTrial(shape: shape, corridorUnits: plan.width)
         fx.clear()
 
-        // Demonstrate when the shape is new to this session, when we're just
-        // starting out, or when the last go at it didn't land.
-        let needsDemo =
-            learner.totalTrials < 3 || !demoedThisSession.contains(shape.id)
-            || lastFailedShape == shape.id
+        // Only the opening few trials get an unprompted demonstration. After
+        // that it's on request — the yellow button appears if she stalls, and
+        // the voice offers rather than just launching into it.
+        let needsDemo = trialsThisSession < autoDemoTrials
 
         await voice.say(Lines.challenge(shape))
         if abort { return .panel }
@@ -470,10 +539,14 @@ final class GameViewController: UIViewController {
         fx.traceGlow(board.allCheckpoints())
 
         if big {
+            // Never the same big one twice running — the variety is what makes
+            // it register as special rather than as the usual noise.
+            let kind = BigCelebration.allCases.filter { $0 != lastBigKind }.randomElement()!
+            lastBigKind = kind
             sfx.bigWin()
-            fx.big()
-            await voice.say(Lines.bigPraise())
-            try? await Task.sleep(nanoseconds: 1_900_000_000)
+            fx.big(kind)
+            await voice.say(kind.line)
+            try? await Task.sleep(nanoseconds: UInt64(kind.duration * 1_000_000_000))
         } else {
             sfx.smallWin()
             fx.small(at: board.boardCentre)
@@ -481,7 +554,37 @@ final class GameViewController: UIViewController {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         fx.clear()
+        await announceUnlocks()
         board.freeze(abort)
+    }
+
+    /// Hand over any pens her progress has just earned.
+    private func announceUnlocks() async {
+        let available = Pens.unlocked(for: learner)
+        let known = Set(penBar.pens.map(\.id))
+        let fresh = available.filter { !known.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+
+        penBar.setPens(available, selected: pen, animated: true)
+        layoutPenBar()
+
+        sfx.bigWin()
+        fx.big(.fireworks)
+        // Several pens can arrive together; one sentence covers the batch.
+        for line in Set(fresh.map { $0.unlock.announcement }).sorted() where !line.isEmpty {
+            await voice.say(line)
+        }
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        fx.clear()
+
+        // Switch her onto the newest pen so the reward is immediately visible.
+        if let newest = fresh.last {
+            pen = newest
+            board.pen = newest
+            penBar.select(newest)
+            settings.penId = newest.id
+            Store.save(learner, settings)
+        }
     }
 
     // MARK: - Grown-up panel
