@@ -61,7 +61,6 @@ final class GameViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        bootLog("viewDidLoad, view.bounds \(NSCoder.string(for: view.bounds))")
         view.backgroundColor = UIColor(red: 0.051, green: 0.063, blue: 0.188, alpha: 1)
 
         board.frame = view.bounds
@@ -95,13 +94,6 @@ final class GameViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        bootLog(
-            "viewDidAppear view=\(NSCoder.string(for: view.bounds)) "
-                + "subviews=\(view.subviews.count) "
-                + "overlay=\(NSCoder.string(for: startOverlay.frame)) "
-                + "overlayHidden=\(startOverlay.isHidden) alpha=\(startOverlay.alpha) "
-                + "board=\(NSCoder.string(for: board.frame)) "
-                + "window=\(String(describing: view.window))")
         #if DEBUG
         guard !selfTestStarted else { return }
         selfTestStarted = true
